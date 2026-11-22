@@ -15,10 +15,11 @@ jobs:
           channel: 'stable'
       - run: |
           flutter create --platforms=android .
-          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 21/g' android/app/build.gradle || true
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 24/g' android/app/build.gradle || true
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/g' android/app/build.gradle || true
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 24/g' android/app/build.gradle.kts || true
           sed -i '/<application/i <uses-permission android:name="android.permission.INTERNET"/><uses-permission android:name="android.permission.CAMERA"/><uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/><uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>' android/app/src/main/AndroidManifest.xml
-          printf "name: wifi_app\npublish_to: 'none'\nversion: 1.0.0+1\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\ndependencies:\n  flutter:\n    sdk: flutter\n  camera: any\n  url_launcher: any\n  permission_handler: any\nflutter:\n  uses-material-design: true\n" > pubspec.yaml
+          printf "name: wifi_app\npublish_to: 'none'\nversion: 1.0.0+1\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\ndependencies:\n  flutter:\n    sdk: flutter\n  camera: ^0.11.0+2\n  url_launcher: ^6.3.1\n  permission_handler: ^11.3.1\nflutter:\n  uses-material-design: true\n" > pubspec.yaml
           cat << 'EOF' > lib/main.dart
           import 'dart:async';
           import 'dart:convert';
@@ -147,8 +148,8 @@ jobs:
           }
           EOF
           flutter pub get
-          flutter build apk --release
+          flutter build apk --debug
       - uses: actions/upload-artifact@v4
         with:
           name: wifi-boshqaruv-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
