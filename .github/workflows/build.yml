@@ -1,0 +1,247 @@
+name: Build APK
+on:
+  push:
+    branches: [ main ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+
+      - name: Create Flutter Project
+        run: flutter create --platforms=android .
+
+      - name: Setup Android Permissions and SDK
+        run: |
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 21/g' android/app/build.gradle || true
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
+          sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.CAMERA"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>' android/app/src/main/AndroidManifest.xml
+
+      - name: Write pubspec.yaml
+        run: |
+          cat << 'EOF' > pubspec.yaml
+          name: wifi_boshqaruv
+          description: Wi-Fi orqali boshqaruv ilovasi
+          publish_to: 'none'
+          version: 1.0.0+1
+          environment:
+            sdk: '>=3.0.0 <4.0.0'
+          dependencies:
+            flutter:
+              sdk: flutter
+            camera: ^0.10.5+9
+            url_launcher: ^6.2.5
+            permission_handler: ^11.3.0
+          flutter:
+            uses-material-design: true
+          EOF
+
+      - name: Write lib/main.dart
+        run: |
+          cat << 'EOF' > lib/main.dart
+          import 'dart:async';
+          import 'dart:convert';
+          import 'dart:io';
+          import 'dart:typed_data';
+          import 'package:flutter/material.dart';
+          import 'package:camera/camera.dart';
+          import 'package:url_launcher/url_launcher.dart';
+          import 'package:permission_handler/permission_handler.dart';
+
+          List<CameraDescription> cameras = [];
+
+          Future<void> main() async {
+            WidgetsFlutterBinding.ensureInitialized();
+            await Permission.camera.request();
+            try {
+              cameras = await availableCameras();
+            } catch (_) {}
+            runApp(const MaterialApp(
+              debugShowCheckedModeBanner: false,
+              home: LocalSyncApp(),
+            ));
+          }
+
+          class LocalSyncApp extends StatefulWidget {
+            const LocalSyncApp({super.key});
+            @override
+            State<LocalSyncApp> createState() => _LocalSyncAppState();
+          }
+
+          class _LocalSyncAppState extends State<LocalSyncApp> {
+            static const int controlPort = 4545;
+            static const int videoPort = 4546;
+
+            String status = "Wi-Fi tarmoqda qurilma qidirilmoqda...";
+            String? peerIp;
+            List<String> myIps = [];
+            RawDatagramSocket? udpSocket;
+            ServerSocket? server;
+            CameraController? camController;
+            Uint8List? receivedFrame;
+            bool isStreaming = false;
+            final TextEditingController linkController = TextEditingController();
+
+            @override
+            void initState() {
+              super.initState();
+              startLocalNetwork();
+            }
+
+            Future<void> startLocalNetwork() async {
+              for (var interface in await NetworkInterface.list()) {
+                for (var addr in interface.addresses) {
+                  myIps.add(addr.address);
+                }
+              }
+
+              server = await ServerSocket.bind(InternetAddress.anyIPv4, controlPort);
+              server!.listen((Socket client) {
+                setState(() {
+                  peerIp = client.remoteAddress.address;
+                  status = "🟢 Qurilma ulandi: $peerIp";
+                });
+                client.listen((Uint8List data) {
+                  final msg = utf8.decode(data);
+                  handleCommand(msg, client.remoteAddress.address);
+                });
+              });
+
+              udpSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, controlPort);
+              udpSocket!.broadcastEnabled = true;
+              udpSocket!.listen((RawSocketEvent event) {
+                if (event == RawSocketEvent.read) {
+                  Datagram? dg = udpSocket!.receive();
+                  if (dg != null && !myIps.contains(dg.address.address)) {
+                    String msg = utf8.decode(dg.data);
+                    if (msg == "HELLO_PHONE" && peerIp == null) {
+                      setState(() {
+                        peerIp = dg.address.address;
+                        status = "🟢 Qurilma topildi: $peerIp";
+                      });
+                    }
+                  }
+                }
+              });
+
+              Timer.periodic(const Duration(seconds: 2), (timer) {
+                if (peerIp == null) {
+                  udpSocket?.send(utf8.encode("HELLO_PHONE"), InternetAddress("255.255.255.255"), controlPort);
+                }
+              });
+            }
+
+            Future<void> sendCommand(String cmd) async {
+              if (peerIp == null) return;
+              try {
+                Socket socket = await Socket.connect(peerIp!, controlPort, timeout: const Duration(seconds: 2));
+                socket.write(cmd);
+                await socket.flush();
+                socket.close();
+              } catch (e) {
+                setState(() => status = "Xatolik: $e");
+              }
+            }
+
+            void handleCommand(String msg, String senderIp) {
+              if (msg == "REQ_CAMERA") {
+                showConsentDialog(
+                  title: "📷 Kamera so‘rovi",
+                  content: "Ikkinchi smartfon kamerangizga ulanmoqchi. Ruxsat berasizmi?",
+                  onAccept: () => startCameraStream(senderIp),
+                );
+              } else if (msg.startsWith("OPEN_URL:")) {
+                String url = msg.replaceFirst("OPEN_URL:", "");
+                showConsentDialog(
+                  title: "▶️ YouTube / Havola so‘rovi",
+                  content: "Ushbu havolani ochishga ruxsat berasizmi?\n$url",
+                  onAccept: () async {
+                    final uri = Uri.parse(url);
+                    if (await canLaunchUrl(uri)) {
+                      await launchUrl(uri, mode: LaunchMode.externalApplication);
+                    }
+                  },
+                );
+              }
+            }
+
+            void showConsentDialog({required String title, required String content, required VoidCallback onAccept}) {
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (ctx) => AlertDialog(
+                  title: Text(title),
+                  content: Text(content),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("❌ Rad etish")),
+                    ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        onAccept();
+                      },
+                      child: const Text("✅ Ruxsat berish"),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            Future<void> startCameraStream(String targetIp) async {
+              if (cameras.isEmpty) return;
+              camController = CameraController(cameras, ResolutionPreset.low, enableAudio: false);
+              await camController!.initialize();
+              setState(() => isStreaming = true);
+
+              RawDatagramSocket videoSender = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+              Timer.periodic(const Duration(milliseconds: 250), (timer) async {
+                if (!isStreaming || camController == null) {
+                  timer.cancel();
+                  return;
+                }
+                try {
+                  XFile pic = await camController!.takePicture();
+                  Uint8List bytes = await pic.readAsBytes();
+                  if (bytes.length < 60000) {
+                    videoSender.send(bytes, InternetAddress(targetIp), videoPort);
+                  }
+                } catch (_) {}
+              });
+            }
+
+            void listenVideoStream() async {
+              RawDatagramSocket videoReceiver = await RawDatagramSocket.bind(InternetAddress.anyIPv4, videoPort);
+              videoReceiver.listen((event) {
+                if (event == RawSocketEvent.read) {
+                  Datagram? dg = videoReceiver.receive();
+                  if (dg != null) {
+                    setState(() => receivedFrame = dg.data);
+                  }
+                }
+              });
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                backgroundColor: const Color(0xFF0F172A),
+                appBar: AppBar(title: const Text("Wi-Fi Direct Boshqaruv"), backgroundColor: const Color(0xFF1E293B)),
+                body: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: ListView(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(10)),
+                        child: Text(status, style: const TextStyle(color: Colors.amber, fontSize: 15), textAlign: TextAlign.center),
+                      ),
+                      const SizedBox(height: 15),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.videocam),
+                        label: const Text("📷 Kamerasiga ulanish (Ruxsat so‘rash)"),
+                        onPressed: peerIp == null ? null : () {
+                          listenVideoStream();
+                          sendCommand("REQ_CAMERA");
