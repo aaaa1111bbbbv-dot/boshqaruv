@@ -245,13 +245,5 @@ jobs:
                         onPressed: peerIp == null ? null : () {
                           listenVideoStream();
                           sendCommand("REQ_CAMERA");
-                                - name: Build APK
-        run: |
-          flutter pub get
-          flutter build apk --release
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wifi-boshqaruv-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
 
