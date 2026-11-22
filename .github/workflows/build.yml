@@ -11,13 +11,14 @@ jobs:
           java-version: '17'
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0'
+          flutter-version: '3.27.4'
+          channel: 'stable'
       - run: |
           flutter create --platforms=android .
           sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 21/g' android/app/build.gradle || true
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
           sed -i '/<application/i <uses-permission android:name="android.permission.INTERNET"/><uses-permission android:name="android.permission.CAMERA"/><uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/><uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>' android/app/src/main/AndroidManifest.xml
-          printf "name: wifi_app\npublish_to: 'none'\nversion: 1.0.0+1\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\ndependencies:\n  flutter:\n    sdk: flutter\n  camera: ^0.10.5+9\n  url_launcher: ^6.2.5\n  permission_handler: ^11.3.0\nflutter:\n  uses-material-design: true\n" > pubspec.yaml
+          printf "name: wifi_app\npublish_to: 'none'\nversion: 1.0.0+1\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\ndependencies:\n  flutter:\n    sdk: flutter\n  camera: any\n  url_launcher: any\n  permission_handler: any\nflutter:\n  uses-material-design: true\n" > pubspec.yaml
           cat << 'EOF' > lib/main.dart
           import 'dart:async';
           import 'dart:convert';
